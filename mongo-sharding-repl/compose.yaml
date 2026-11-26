@@ -3,6 +3,7 @@ name: mongo-sharding-repl
 services:
   configSrv-1: &config
     image: dh-mirror.gitverse.ru/mongo:7
+    restart: unless-stopped
     command: ["mongod", "--configsvr", "--replSet", "configSrv", "--port", "27019", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
     volumes: ["config1:/data/db"]
   configSrv-2:
@@ -14,6 +15,7 @@ services:
 
   shard1-1: &shard1
     image: dh-mirror.gitverse.ru/mongo:7
+    restart: unless-stopped
     command: ["mongod", "--shardsvr", "--replSet", "shard1", "--port", "27018", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
     volumes: ["shard1a:/data/db"]
   shard1-2:
@@ -25,6 +27,7 @@ services:
 
   shard2-1: &shard2
     image: dh-mirror.gitverse.ru/mongo:7
+    restart: unless-stopped
     command: ["mongod", "--shardsvr", "--replSet", "shard2", "--port", "27018", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
     volumes: ["shard2a:/data/db"]
   shard2-2:
@@ -36,13 +39,12 @@ services:
 
   mongos:
     image: dh-mirror.gitverse.ru/mongo:7
+    restart: unless-stopped
     command: ["mongos", "--configdb", "configSrv/configSrv-1:27019,configSrv-2:27019,configSrv-3:27019", "--bind_ip_all", "--port", "27017"]
     depends_on: [configSrv-1, configSrv-2, configSrv-3, shard1-1, shard1-2, shard1-3, shard2-1, shard2-2, shard2-3]
 
   pymongo_api:
     image: kazhem/pymongo_api:1.0.0
-    build:
-      context: api_app
     depends_on: [mongos]
     ports: ["8080:8080"]
     environment:

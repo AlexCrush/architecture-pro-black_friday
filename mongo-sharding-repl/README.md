@@ -18,7 +18,9 @@ bash scripts/init.sh
 3. Собирает replica set `shard2` из `shard2-1`, `shard2-2`, `shard2-3`.
 4. Через mongos добавляет оба шарда целиком, включает шардирование `somedb.helloDoc` по хешу `name` и вставляет 1000 документов.
 
-Запись идёт в primary. Secondary получают те же документы репликацией.
+Запись идёт в текущий primary: роль выбирается выборами и может переехать на другой узел. Secondary получают те же документы репликацией.
+
+Стенду нужно около 8 ГБ RAM. Девять mongod с кэшем WiredTiger 0.25 ГБ (меньше MongoDB 7 не принимает) вместе с mongos и приложением не влезают в 4 ГБ.
 
 ## Проверка
 
@@ -26,20 +28,18 @@ bash scripts/init.sh
 
 В JSON не меньше 1000 документов. В `shards` у каждого шарда три хоста — это и есть реплики.
 
-Число реплик и документов на primary:
+Число реплик. `rs.status()` можно спросить у любого члена набора, не только у primary:
 
 ```shell
 docker compose exec -T shard1-1 mongosh --port 27018 --quiet --eval 'rs.status().members.length'
-docker compose exec -T shard1-1 mongosh --port 27018 --quiet <<EOF
-use somedb
-db.helloDoc.countDocuments()
-EOF
+docker compose exec -T shard2-1 mongosh --port 27018 --quiet --eval 'rs.status().members.length'
 ```
 
+Документы по шардам считает mongos. `countDocuments()` на конкретном контейнере отвечает только если этот узел сейчас primary.
+
 ```shell
-docker compose exec -T shard2-1 mongosh --port 27018 --quiet --eval 'rs.status().members.length'
-docker compose exec -T shard2-1 mongosh --port 27018 --quiet <<EOF
+docker compose exec -T mongos mongosh --port 27017 --quiet <<'EOF'
 use somedb
-db.helloDoc.countDocuments()
+db.helloDoc.aggregate([{ $collStats: { count: {} } }]).forEach(d => print(d.shard, d.count))
 EOF
 ```
