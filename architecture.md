@@ -120,7 +120,9 @@ db.carts.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 })
 
 Заказ и остаток — разные коллекции с разными ключами, поэтому одна запись не атомарна на весь кластер. Распределённой транзакции на горячем пути нет. Клиент присылает `order_id`, он становится `_id` заказа. Условие сравнивает `qty` с заказанным количеством: проверка `$gte: 1` и `$inc: -1` при заказе двух штук уводит остаток в минус. Цена в заказ берётся из чтения документа на primary, а не с витрины.
 
-Документ заказа пишется первым, со статусом `reserving`, и в нём уже лежат `created_at`, `month` и позиции с количеством. Падение процесса его не стирает. Списание и резерв — один `updateOne`: фильтр не пускает повтор, если `holds` уже содержит этот `order_id`, а обновление вместе с `$inc` кладёт резерв на документ товара.
+Документ заказа пишется первым, со статусом `reserving`, и в нём уже лежат `created_at`, `month` и позиции с количеством. Падение процесса его не стирает. Списание и резерв — один `updateOne`. Фильтр `holds: { $not: { $elemMatch: { order_id: orderId } } }` пропускает обновление, только когда этого `order_id` в массиве нет. Сравнение `"holds.order_id": { $ne: orderId }` на массиве истинно, если в `holds` есть чужой заказ: на горячем товаре он есть почти всегда, и повтор снова делает `$inc`.
+
+В том же запросе два массива, `stock` и `holds`. Позиционный `$` не различает, какой из них обновлять, поэтому зона списывается через `arrayFilters`.
 
 ```javascript
 db.orders.insertOne({
@@ -134,27 +136,40 @@ db.orders.insertOne({
   zone: "moscow"
 })
 
-db.products.updateOne(
+const taken = db.products.updateOne(
   {
     _id: productId,
     stock: { $elemMatch: { zone: "moscow", qty: { $gte: orderedQty } } },
-    "holds.order_id": { $ne: orderId }
+    holds: { $not: { $elemMatch: { order_id: orderId } } }
   },
   {
-    $inc: { "stock.$.qty": -orderedQty },
+    $inc: { "stock.$[s].qty": -orderedQty },
     $push: { holds: { order_id: orderId, qty: orderedQty, zone: "moscow" } }
-  }
+  },
+  { arrayFilters: [{ "s.zone": "moscow" }] }
 )
 
-db.orders.updateOne(
-  { _id: orderId, status: "reserving" },
-  { $set: { status: "created" } }
-)
+const held = db.products.findOne({
+  _id: productId,
+  holds: { $elemMatch: { order_id: orderId } }
+})
+
+if (taken.matchedCount == 1 || held) {
+  db.orders.updateOne(
+    { _id: orderId, status: "reserving" },
+    { $set: { status: "created" } }
+  )
+} else {
+  db.orders.updateOne(
+    { _id: orderId, status: "reserving" },
+    { $set: { status: "rejected" } }
+  )
+}
 ```
 
-Повтор начинает с чтения заказа по `_id`. Статус `created` значит, что списание уже было: повтор только снимает резерв `$pull`, если он ещё на товаре, и выходит. Заказа нет — `insertOne` с тем же `_id` второй документ не создаёт, дальше обычное списание. Статус `reserving` и резерв с этим `order_id` уже на товаре — `$inc` не выполняется, заказ переводится в `created`. Резерва нет — списание выполняется один раз.
+`matchedCount == 1` — остаток списан в этом вызове, заказ становится `created`. `matchedCount == 0` и резерв с этим `order_id` уже лежит на товаре — повтор после падения: `$inc` не выполнился, заказ тоже становится `created`. `matchedCount == 0` и резерва нет — штук не хватает, заказ становится `rejected`.
 
-`matchedCount == 0` при пустом резерве значит, что штук не хватает. Заказ помечается `rejected`. Если не списался второй товар, по первому обратный `$inc` делается только пока резерв на месте, и резерв снимается. Такой заказ в `created` не переводится.
+Повтор начинает с чтения заказа по `_id`. Статус `created` значит, что списание уже было: повтор только снимает резерв, если он ещё на товаре, и выходит. Заказа нет — `insertOne` с тем же `_id` второй документ не создаёт, дальше то же списание. Если не списался второй товар, по первому обратный `$inc` идёт через тот же `arrayFilters` и только пока резерв на месте, затем резерв снимается `$pull`. Такой заказ в `created` не переводится.
 
 ## 8. Горячие шарды
 
