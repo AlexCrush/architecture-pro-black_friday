@@ -199,6 +199,7 @@ rs.status().members.map(m => ({ name: m.name, state: m.stateStr, optime: m.optim
 
 db.products.getShardDistribution()
 
+use shop
 db.setProfilingLevel(1, { slowms: 100 })
 db.system.profile.aggregate([
   { $match: { ns: "shop.products", op: "update" } },
@@ -208,7 +209,7 @@ db.system.profile.aggregate([
 ])
 ```
 
-Profiler крутится на primary шарда. У команды `update` фильтр лежит в `command.updates.0.q._id`: группировка по `command.q._id` для такого документа пустая. Верхние `_id` — документы, которые греют узел.
+Profiler крутится на primary шарда. `setProfilingLevel` включает уровень у той базы, которая открыта в shell, поэтому перед ним стоит `use shop`: иначе профилируется не `shop`, а текущая база сессии, и `db.system.profile` читается оттуда же. У команды `update` фильтр лежит в `command.updates.0.q._id`: группировка по `command.q._id` для такого документа пустая. Верхние `_id` — документы, которые греют узел.
 
 ### Что делать
 
