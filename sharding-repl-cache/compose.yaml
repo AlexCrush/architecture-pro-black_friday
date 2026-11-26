@@ -1,0 +1,65 @@
+name: sharding-repl-cache
+
+services:
+  configSrv-1: &config
+    image: dh-mirror.gitverse.ru/mongo:7
+    command: ["mongod", "--configsvr", "--replSet", "configSrv", "--port", "27019", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes: ["config1:/data/db"]
+  configSrv-2:
+    <<: *config
+    volumes: ["config2:/data/db"]
+  configSrv-3:
+    <<: *config
+    volumes: ["config3:/data/db"]
+
+  shard1-1: &shard1
+    image: dh-mirror.gitverse.ru/mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shard1", "--port", "27018", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes: ["shard1a:/data/db"]
+  shard1-2:
+    <<: *shard1
+    volumes: ["shard1b:/data/db"]
+  shard1-3:
+    <<: *shard1
+    volumes: ["shard1c:/data/db"]
+
+  shard2-1: &shard2
+    image: dh-mirror.gitverse.ru/mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shard2", "--port", "27018", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes: ["shard2a:/data/db"]
+  shard2-2:
+    <<: *shard2
+    volumes: ["shard2b:/data/db"]
+  shard2-3:
+    <<: *shard2
+    volumes: ["shard2c:/data/db"]
+
+  mongos:
+    image: dh-mirror.gitverse.ru/mongo:7
+    command: ["mongos", "--configdb", "configSrv/configSrv-1:27019,configSrv-2:27019,configSrv-3:27019", "--bind_ip_all", "--port", "27017"]
+    depends_on: [configSrv-1, configSrv-2, configSrv-3, shard1-1, shard1-2, shard1-3, shard2-1, shard2-2, shard2-3]
+
+  redis:
+    image: redis:7-alpine
+
+  pymongo_api:
+    image: kazhem/pymongo_api:1.0.0
+    build:
+      context: api_app
+    depends_on: [mongos, redis]
+    ports: ["8080:8080"]
+    environment:
+      MONGODB_URL: "mongodb://mongos:27017"
+      MONGODB_DATABASE_NAME: "somedb"
+      REDIS_URL: "redis://redis:6379"
+
+volumes:
+  config1:
+  config2:
+  config3:
+  shard1a:
+  shard1b:
+  shard1c:
+  shard2a:
+  shard2b:
+  shard2c:
